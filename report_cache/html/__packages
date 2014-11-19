@@ -8,3 +8,5 @@ foreach
 iterators
 doMC
 randomForest
+caTools
+kernlab

@@ -1,10 +1,11 @@
 ---
-title: "Piratical Machine Learning Project"
+title: "Pratical Machine Learning Project"
 author: "YJ"
 date: "18 Nov 2014"
 output:
   html_document:
     keep_md: yes
+    theme: flatly
     toc: yes
 ---
 
@@ -13,7 +14,7 @@ output:
 The following code will get and read the data in R. The variable training and test are denoted to the respective data set.
 
 ```{r cache=TRUE}
-library(RCurl)
+library(RCurl, quietly = T)
 # reading training dataset
 fp <- getURL("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
 dataset <- read.csv(text = fp)
@@ -53,7 +54,7 @@ We have at last `r ncol(forMLdat)-1` variables.
 
 ## Dataset splitting
 
-We split the dataset into `training` and `testing` by 75% and 25%.
+We split the data set into `training` and `testing` by 75% and 25%.
 
 ```{r}
 # creating training/testing dataset for model building
@@ -78,18 +79,18 @@ We have seen that with PCA we can reduce the number of predictors by generating 
 
 ## Data training with randomForest
 
-First attempt with randomForest. By using `train` function in "caret" package, we by default train the data set with group-out cross validation with 10 times re-sampling and a 10% training set (around 1900 training samples each run). Because the random forest algorithm is not sensible to the scale of the variables, so non pre-processing is done for the training. 
+First attempt with random Forest. By using `train` function in "caret" package, we by default train the data set with group-out cross validation with 10 times re-sampling and a 10% training set (around 1900 training samples each run). Because the random forest algorithm is not sensible to the scale of the variables, so non pre-processing is done for the training. 
 
 `doMC` package is used for parallel computing.
 
 ```{r cache =T}
 library(doMC)
-registerDoMC(cores = 4)
+registerDoMC(cores = 8)
 trainCtr <- trainControl(
   method = "LGOCV",
   number = 10,
   p = 0.1)
-modRF <- train(classe~., data=training, method="rf", trControl = trainCtr, tuneGrid = data.frame(mtry=seq(10, 50, by = 5)))
+modRF <- train(classe~., data=training, method="rf", trControl = trainCtr, tuneGrid = data.frame(mtry=seq(10, 50, by = 5)), quietly = T)
 ```
 
 We use `tuneGrid` for tuning the parameter `mtry` from 10 to 50 with step 5. Below is the plot illustrate the Accuracy vs. mtry:
@@ -101,7 +102,7 @@ plot(modRF)
 We also observe that in all of the `r ncol(training)-1` variables, only a few take an important role in the model:
 
 ```{r echo = F}
-varImpPlot(modRF$finalModel)
+randomForest::varImpPlot(modRF$finalModel, main = "Importance of Variables", cex = 0.8)
 ```
 
 The confusion matrix of training set has a pretty good result:
@@ -110,7 +111,7 @@ The confusion matrix of training set has a pretty good result:
 caret::confusionMatrix(modRF)
 ```
 
-By applying to reserved 25% testing set, we can assume that we have obtained a robustic model:
+By applying to reserved 25% testing set, we can assume that we have obtained a robust model:
 
 ```{r}
 resPred <- predict(modRF, newdata = testing)
@@ -122,6 +123,7 @@ caret::confusionMatrix(resPred, testing$classe)
 Now we passe to boosted logistic regression in caTools packages.
 
 ```{r cache = T}
+registerDoMC(cores = 8)
 trainCtr <- trainControl(
   method = "LGOCV",
   number = 10,
@@ -144,7 +146,7 @@ caret::confusionMatrix(resPred, testing$classe)
 
 ## Training with support vector machine with radial kernel
 
-The support vector machine can also provide a computational light algorithm and a goog performance.
+The support vector machine can also provide a computational light algorithm and a good performance.
 
 ```{r cache = T}
 trainCtr <- trainControl(
@@ -170,16 +172,19 @@ caret::confusionMatrix(resPred, testing$classe)
 
 ## Comparaison of Fitted models
 
-```{r}
+By comparing three models with their accuracy and kappa (for performance metric), we could conclude that the `random forest` has the best accuracy and performance.
+
+```{r echo=FALSE}
 resamps <- resamples(list(RF = modRF,
                           LB = modLB,
                           SVM = modSVM))
-trellis.par.set(theme1)
-bwplot(resamps, layout = c(3, 1))
+bwplot(resamps, layout = c(2, 1))
 ```
 
 
 ## Predicting "test" data set and output for Programming Validation
+
+We use the following function provided by the course to produce the files for submission.
 
 ```{r}
 out <- predict(modRF, newdata = test)
@@ -187,11 +192,10 @@ out <- predict(modRF, newdata = test)
 pml_write_files = function(x){
   n = length(x)
   for(i in 1:n){
-    filename = paste0("problem_id_",i,".txt")
+    filename = paste0("submission/problem_id_",i,".txt")
     write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
   }
 }
-# pml_write_files(out)
-
+pml_write_files(out)
 ```
 
