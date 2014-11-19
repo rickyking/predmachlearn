@@ -1,0 +1,12 @@
+base
+bitops
+RCurl
+lattice
+ggplot2
+caret
+foreach
+iterators
+doMC
+randomForest
+caTools
+kernlab
