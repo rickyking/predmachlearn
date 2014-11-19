@@ -1,0 +1,197 @@
+---
+title: "Piratical Machine Learning Project"
+author: "YJ"
+date: "18 Nov 2014"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+---
+
+## Getting data
+
+The following code will get and read the data in R. The variable training and test are denoted to the respective data set.
+
+```{r cache=TRUE}
+library(RCurl)
+# reading training dataset
+fp <- getURL("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+dataset <- read.csv(text = fp)
+# reading test dataset for submission
+fp <- getURL("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+test <- read.csv(text = fp)
+```
+
+## Data Description and pre-modeling analysis
+
+With the following summary statistics of the data set, we find that there is a lot of near zero or NA variables. So we will try to remove them before passing to modeling.
+
+```{r}
+dim(dataset)
+set.seed(12345)
+# summary(dataset)
+```
+Here is the code to remove "kurtosis" and "skewness" statistics. We also remove the variables with NA percentage > 90%. The time-stamp and window variables are also removed due to inconsistency of analysis.
+
+```{r}
+# remove nearly empty and invalide var
+ind_kurtosis <- grep("kurtosis",colnames(dataset))
+ind_skewness <- grep("skewness",colnames(dataset))
+# calculate the percentage of NA in each variable (threshold = 0.9)
+sum(colMeans(is.na(dataset)) > 0.9)
+ind_NA <- which(colMeans(is.na(dataset)) > 0.9)
+ind_NA_test <- which(colMeans(is.na(test))==1)
+## remove index var "X", timestamp var colnumber = 2,3,4,5
+ind_remove <- unique(c(1:7, ind_kurtosis, ind_skewness, ind_NA, ind_NA_test))
+forMLdat <- dataset[,-ind_remove]
+dim(forMLdat)
+## turn classe into factor
+forMLdat$classe <- factor(forMLdat$classe)
+```
+
+We have at last `r ncol(forMLdat)-1` variables.
+
+## Dataset splitting
+
+We split the dataset into `training` and `testing` by 75% and 25%.
+
+```{r}
+# creating training/testing dataset for model building
+library(caret)
+ind_train <- createDataPartition(forMLdat$classe, p=.75, list=FALSE, times=1)
+training <- forMLdat[ind_train,]
+testing <- forMLdat[-ind_train,]
+```
+
+We have `r nrow(training)` training data set and `r nrow(testing)` testing data set.
+
+## Principle Component Analysis (PCA)
+
+We still have `r ncol(forMLdat)-1` variables. We could see if we can use PCA to reduce the number of predictors.
+
+```{r}
+preProcess(training[,-ncol(training)], method = "pca", thresh=0.95)
+preProcess(training[,-ncol(training)], method = "pca", thresh=0.90)
+preProcess(training[,-ncol(training)], method = "pca", thresh=0.85)
+```
+We have seen that with PCA we can reduce the number of predictors by generating 25/18/15 components to capture 95%/90%/85% variance in the predictors.
+
+## Data training with randomForest
+
+First attempt with randomForest. By using `train` function in "caret" package, we by default train the data set with group-out cross validation with 10 times re-sampling and a 10% training set (around 1900 training samples each run). Because the random forest algorithm is not sensible to the scale of the variables, so non pre-processing is done for the training. 
+
+`doMC` package is used for parallel computing.
+
+```{r cache =T}
+library(doMC)
+registerDoMC(cores = 4)
+trainCtr <- trainControl(
+  method = "LGOCV",
+  number = 10,
+  p = 0.1)
+modRF <- train(classe~., data=training, method="rf", trControl = trainCtr, tuneGrid = data.frame(mtry=seq(10, 50, by = 5)))
+```
+
+We use `tuneGrid` for tuning the parameter `mtry` from 10 to 50 with step 5. Below is the plot illustrate the Accuracy vs. mtry:
+
+```{r echo=F}
+plot(modRF)
+```
+
+We also observe that in all of the `r ncol(training)-1` variables, only a few take an important role in the model:
+
+```{r echo = F}
+varImpPlot(modRF$finalModel)
+```
+
+The confusion matrix of training set has a pretty good result:
+
+```{r echo = F}
+caret::confusionMatrix(modRF)
+```
+
+By applying to reserved 25% testing set, we can assume that we have obtained a robustic model:
+
+```{r}
+resPred <- predict(modRF, newdata = testing)
+caret::confusionMatrix(resPred, testing$classe)
+```
+
+## Data training with boosted logistic regression (package `caTools`)
+
+Now we passe to boosted logistic regression in caTools packages.
+
+```{r cache = T}
+trainCtr <- trainControl(
+  method = "LGOCV",
+  number = 10,
+  p = 0.1)
+modLB <- train(classe~., data = training, method = "LogitBoost", trControl = trainCtr, preprocess="pca")
+```
+
+The confusion matrix on training set:
+
+```{r echo=FALSE,}
+confusionMatrix.train(modLB)
+```
+
+The confusion matrix of the prediction in testing set:
+
+```{r echo=FALSE}
+resPred <- predict(modLB, newdata = testing)
+caret::confusionMatrix(resPred, testing$classe)
+```
+
+## Training with support vector machine with radial kernel
+
+The support vector machine can also provide a computational light algorithm and a goog performance.
+
+```{r cache = T}
+trainCtr <- trainControl(
+  method = "LGOCV",
+  number = 10,
+  p = 0.1)
+modSVM <- train(classe~., data = training, method ="svmRadial", preProc = c("center", "scale"), trControl = trainCtr, tuneLength =4)
+plot(modSVM)
+```
+
+The confusion matrix of training set:
+
+```{r echo=FALSE}
+caret::confusionMatrix(modSVM)
+```
+
+The confusion matrix of prediction and true value of testing set:
+
+```{r echo=FALSE}
+resPred <- predict(modSVM, newdata = testing)
+caret::confusionMatrix(resPred, testing$classe)
+```
+
+## Comparaison of Fitted models
+
+```{r}
+resamps <- resamples(list(RF = modRF,
+                          LB = modLB,
+                          SVM = modSVM))
+trellis.par.set(theme1)
+bwplot(resamps, layout = c(3, 1))
+```
+
+
+## Predicting "test" data set and output for Programming Validation
+
+```{r}
+out <- predict(modRF, newdata = test)
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+# pml_write_files(out)
+
+```
+
